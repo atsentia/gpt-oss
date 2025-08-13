@@ -1,7 +1,7 @@
 import json
 import math
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 
 import torch
 import torch.distributed as dist
@@ -397,7 +397,10 @@ class Transformer(torch.nn.Module):
         config_path = os.path.join(path, "config.json")
         with open(config_path, "r") as f:
             json_config = json.load(f)
-            config = ModelConfig(**json_config)
+            # Filter out unexpected fields from config.json
+            valid_fields = {f.name for f in fields(ModelConfig)}
+            filtered_config = {k: v for k, v in json_config.items() if k in valid_fields}
+            config = ModelConfig(**filtered_config)
 
         model = Transformer(
             config=config,
@@ -410,7 +413,7 @@ class Transformer(torch.nn.Module):
         world_size = dist.get_world_size() if dist.is_initialized() else 1
         per_rank_intermediate_size = config.intermediate_size // world_size
 
-        checkpoint = Checkpoint(path, device)
+        checkpoint = Checkpoint(path, device, num_layers=config.num_hidden_layers)
 
         for name, param in model.named_parameters():
             loaded_tensor = checkpoint.get(name)

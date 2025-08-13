@@ -26,13 +26,28 @@ PARAM_NAME_MAP = {
 
 
 class Checkpoint:
-    def __init__(self, path: str, device: torch.device):
+    def __init__(self, path: str, device: torch.device, num_layers: int = 36):
         device_str = (
             device.type
             if device.index is None
             else device.type + ":" + str(device.index)
         )
         self.device_str = device_str
+        
+        # For GPT-OSS-20B (24 layers) or other models, build dynamic parameter map
+        if num_layers != 36:
+            self.param_name_map = {
+                f"block.{n}.mlp.mlp1_bias": f"block.{n}.mlp.mlp1_bias" for n in range(num_layers)
+            } | {
+                f"block.{n}.mlp.mlp1_weight": (f"block.{n}.mlp.mlp1_weight.blocks", f"block.{n}.mlp.mlp1_weight.scales") for n in range(num_layers)
+            } | {
+                f"block.{n}.mlp.mlp2_bias": f"block.{n}.mlp.mlp2_bias" for n in range(num_layers)
+            } | {
+                f"block.{n}.mlp.mlp2_weight": (f"block.{n}.mlp.mlp2_weight.blocks", f"block.{n}.mlp.mlp2_weight.scales") for n in range(num_layers)
+            }
+        else:
+            # Use default for GPT-OSS-120B (backward compatibility)
+            self.param_name_map = PARAM_NAME_MAP
 
         # Read from all files ending with .safetensors in the checkpoint directory
         safetensor_files = [
@@ -50,7 +65,7 @@ class Checkpoint:
         self.tensor_name_to_file = tensor_name_to_file
 
     def get(self, name: str) -> torch.Tensor:
-        match PARAM_NAME_MAP.get(name, name):
+        match self.param_name_map.get(name, name):
             case (blocks_name, scales_name):
                 # MoE weights: are in block-based MXFP4 format
                 return self._get_mxfp4_tensor(blocks_name, scales_name, dtype=torch.bfloat16)
